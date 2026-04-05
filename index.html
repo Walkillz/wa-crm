@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WagerAttack CRM — Player Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style>
+    :root {
+      --bg-page: #0a0a0a;
+      --bg-card: #111111;
+      --bg-nested: #1a1a1a;
+      --border: #2a2a2a;
+      --red: #E63946;
+      --yellow: #FFD60A;
+      --white: #FFFFFF;
+      --gray: #999999;
+      --green: #4ade80;
+      --red-neg: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: var(--bg-page);
+      color: var(--white);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      margin: 0;
+      min-height: 100vh;
+    }
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-page); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    /* Animations */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    .spin { animation: spin 1s linear infinite; }
+    .pulse { animation: pulse 1.5s ease-in-out infinite; }
+    /* Table */
+    .player-table { width: 100%; border-collapse: collapse; }
+    .player-table th {
+      background: var(--bg-nested);
+      color: var(--gray);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    .player-table th:hover { color: var(--white); }
+    .player-table td {
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      vertical-align: middle;
+    }
+    .player-table tr:last-child td { border-bottom: none; }
+    .player-table tbody tr { cursor: pointer; transition: background .12s; }
+    .player-table tbody tr:hover { background: rgba(255,255,255,.04); }
+    .player-table tbody tr.selected { background: rgba(255,214,10,.06); }
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    /* Segment tab */
+    .seg-tab {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      cursor: pointer;
+      min-width: 80px;
+      transition: all .15s;
+    }
+    .seg-tab:hover { border-color: #444; }
+    .seg-tab.active { border-color: var(--yellow); background: rgba(255,214,10,.08); }
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .05em;
+      white-space: nowrap;
+    }
+    /* Input */
+    .input {
+      background: var(--bg-nested);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--white);
+      padding: 9px 14px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .15s;
+      width: 100%;
+    }
+    .input:focus { border-color: #555; }
+    /* Select */
+    .select {
+      background: var(--bg-nested);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--white);
+      padding: 9px 14px;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+    /* Btn */
+    .btn {
+      background: var(--bg-nested);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--white);
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: #555; background: #222; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--yellow);
+      border-color: var(--yellow);
+      color: #000;
+      font-weight: 700;
+    }
+    .btn-primary:hover { background: #e6c000; border-color: #e6c000; }
+    /* Status dot */
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    /* Loading overlay */
+    #loading-overlay {
+      position: fixed; inset: 0;
+      background: var(--bg-page);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 1000;
+    }
+    /* Warning banner */
+    .warning-banner {
+      background: rgba(230,57,70,.12);
+      border: 1px solid rgba(230,57,70,.4);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: var(--red-neg);
+    }
+    /* Info panel (player detail) */
+    #detail-panel {
+      background: var(--bg-nested);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      margin-top: 16px;
+    }
+    /* Responsive */
+    @media (max-width: 767px) {
+      .hide-mobile { display: none !important; }
+      .seg-tabs-wrap { overflow-x: auto; }
+      .summary-grid { grid-template-columns: 1fr 1fr !important; }
+    }
+    @media (min-width: 768px) and (max-width: 1199px) {
+      .hide-tablet { display: none !important; }
+    }
+    @media (min-width: 768px) {
+      .mobile-cards { display: none !important; }
+    }
+    @media (max-width: 767px) {
+      .desktop-table { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay">
+  <div style="text-align:center;">
+    <svg class="spin" width="48" height="48" viewBox="0 0 24 24" fill="none" style="margin-bottom:20px;">
+      <circle cx="12" cy="12" r="10" stroke="#2a2a2a" stroke-width="3"/>
+      <path d="M12 2a10 10 0 0 1 10 10" stroke="#E63946" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+    <div style="color:#FFD60A;font-size:22px;font-weight:800;letter-spacing:.12em;margin-bottom:8px;">WAGERATTACK</div>
+    <div id="loading-msg" style="color:#999;font-size:14px;">Connecting to WagerAttack...</div>
+  </div>
+</div>
+
+<!-- Main App (hidden until loaded) -->
+<div id="app" style="display:none; max-width:1400px; margin:0 auto; padding:20px;">
+
+  <!-- Header -->
+  <header style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+    <div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="color:var(--yellow); font-size:22px; font-weight:900; letter-spacing:.15em;">WAGERATTACK</span>
+        <span style="color:var(--red); font-size:11px; font-weight:700; letter-spacing:.06em; background:rgba(230,57,70,.15); padding:2px 8px; border-radius:4px;">CRM</span>
+      </div>
+      <div style="color:var(--gray); font-size:13px; margin-top:3px;">Player Management Dashboard</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--gray);">
+        <span id="status-dot" class="dot" style="background:#444;"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+      <div style="font-size:12px; color:var(--gray);">
+        Updated: <span id="last-updated">—</span>
+      </div>
+      <button class="btn" id="refresh-btn" onclick="refreshData()">
+        <span id="refresh-icon">↻</span> Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Error / Warning Banners -->
+  <div id="error-banner" style="display:none;" class="warning-banner" style="margin-bottom:16px;"></div>
+
+  <!-- Segment Tabs -->
+  <div class="seg-tabs-wrap" style="margin-bottom:20px;">
+    <div id="seg-tabs" style="display:flex; gap:8px; flex-wrap:nowrap; min-width:max-content;"></div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div id="summary-grid" class="summary-grid" style="display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:20px;"></div>
+
+  <!-- Search & Filter -->
+  <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+    <div style="position:relative; flex:1; min-width:200px;">
+      <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--gray); font-size:14px;">🔍</span>
+      <input class="input" id="search-input" placeholder="Search by player ID or name..." style="padding-left:34px;" oninput="onSearchInput()" />
+    </div>
+    <select class="select" id="sort-select" onchange="render()">
+      <option value="lastActive">Sort: Last Active</option>
+      <option value="balanceDesc">Balance (High→Low)</option>
+      <option value="weekPnl">Week P&L</option>
+      <option value="lifetime">Lifetime Value</option>
+      <option value="nameAz">Name (A-Z)</option>
+    </select>
+  </div>
+
+  <!-- Player Table (Desktop/Tablet) -->
+  <div class="card desktop-table" style="padding:0; overflow:hidden;">
+    <table class="player-table" id="player-table">
+      <thead>
+        <tr>
+          <th onclick="setSortCol('id')">Player <span id="sort-id"></span></th>
+          <th onclick="setSortCol('name')">Name <span id="sort-name"></span></th>
+          <th onclick="setSortCol('balance')">Balance <span id="sort-balance"></span></th>
+          <th onclick="setSortCol('weekPnl')">Week P&L <span id="sort-weekPnl"></span></th>
+          <th onclick="setSortCol('lifetime')">Lifetime <span id="sort-lifetime"></span></th>
+          <th onclick="setSortCol('lastActive')">Last Active <span id="sort-lastActive"></span></th>
+          <th>Segment</th>
+          <th>Status</th>
+          <th class="hide-tablet">Free Play</th>
+          <th class="hide-tablet">⚑</th>
+        </tr>
+      </thead>
+      <tbody id="player-tbody"></tbody>
+    </table>
+    <!-- Pagination -->
+    <div id="pagination" style="display:none; padding:12px 16px; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+      <span id="page-info" style="font-size:12px; color:var(--gray);"></span>
+      <div style="display:flex; gap:8px;">
+        <button class="btn" id="prev-btn" onclick="changePage(-1)">← Prev</button>
+        <button class="btn" id="next-btn" onclick="changePage(1)">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Player Cards (Mobile) -->
+  <div id="mobile-cards" class="mobile-cards"></div>
+
+  <!-- Player Detail Panel -->
+  <div id="detail-panel" style="display:none;"></div>
+
+</div>
+
+<script type="module">
+// ─── CONFIG ────────────────────────────────────────────────────────────────────
+const PROXY = 'https://wa-proxy.mahmoudwakil89.workers.dev';
+const PAGE_SIZE = 50;
+
+// ─── STATE ─────────────────────────────────────────────────────────────────────
+let state = {
+  players: [],
+  pendingWagers: [],
+  token: null,
+  loading: false,
+  error: null,
+  warnings: [],
+  activeSeg: 'ALL',
+  search: '',
+  sortKey: 'lastActive',
+  sortDir: 'desc',
+  page: 0,
+  selectedPlayer: null,
+  lastUpdated: null
+};
+
+let searchTimer = null;
+
+// ─── API CLIENT ────────────────────────────────────────────────────────────────
+class WaCRM {
+  constructor(proxyUrl) {
+    this.proxy = proxyUrl;
+    this.token = null;
+    this.customerId = 'MOWA';
+  }
+
+  async auth() {
+    const r = await fetch(`${this.proxy}/cloud/api/System/authenticateCustomer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'customerID=MOWA&password=Wakil'
+    });
+    if (!r.ok) throw new Error(`Auth failed: HTTP ${r.status}`);
+    const d = await r.json();
+    console.log('[WA] Auth response:', JSON.stringify(d).substring(0, 200));
+    if (!d.code) throw new Error('Auth response missing token code');
+    this.token = d.code;
+    return this.token;
+  }
+
+  async renewToken() {
+    const r = await fetch(`${this.proxy}/cloud/api/System/renewToken`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${this.token}`
+      },
+      body: 'operation=renewToken&agentSite=0'
+    });
+    if (!r.ok) throw new Error(`Token renewal failed: HTTP ${r.status}`);
+    const d = await r.json();
+    console.log('[WA] RenewToken response keys:', Object.keys(d));
+    if (!d.code) throw new Error('renewToken response missing code');
+    this.token = d.code;
+    return this.token;
+  }
+
+  async apiCall(controller, operation, extraParams = {}) {
+    await this.renewToken();
+    const params = new URLSearchParams({
+      customerID: this.customerId,
+      office: 'M1ATTA',
+      operation: operation,
+      agentSite: '0',
+      ...extraParams
+    });
+    const r = await fetch(`${this.proxy}/cloud/api/${controller}/${operation}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${this.token}`
+      },
+      body: params.toString()
+    });
+    if (!r.ok) throw new Error(`${controller}/${operation} failed: HTTP ${r.status}`);
+    const data = await r.json();
+    console.log(`[WA] ${controller}/${operation} raw response (first 500 chars):`, JSON.stringify(data).substring(0, 500));
+    return data;
+  }
+
+  async getPlayers() { return this.apiCall('Customer', 'getCustomers'); }
+  async getPendingWagers() { return this.apiCall('Wager', 'getPendingWagers'); }
+  async getWeeklyFigures() { return this.apiCall('Report', 'getWeeklyFigures'); }
+}
+
+const api = new WaCRM(PROXY);
+
+// ─── DATA NORMALIZATION ────────────────────────────────────────────────────────
+// Flexible extraction: tries multiple possible field names
+function pick(obj, ...keys) {
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+    // case-insensitive
+    const lk = k.toLowerCase();
+    for (const ok of Object.keys(obj)) {
+      if (ok.toLowerCase() === lk && obj[ok] !== undefined && obj[ok] !== null) return obj[ok];
+    }
+  }
+  return undefined;
+}
+
+function toNum(v) {
+  if (v === undefined || v === null || v === '') return 0;
+  const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function toBool(v) {
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  const s = String(v).toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes' || s === 'y';
+}
+
+function toDate(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function extractArray(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  // common nesting patterns
+  for (const k of ['LIST', 'list', 'customers', 'CUSTOMERS', 'data', 'DATA', 'items', 'ITEMS', 'result', 'RESULT']) {
+    if (raw[k]) {
+      const v = raw[k];
+      if (Array.isArray(v)) return v;
+      // nested further
+      for (const k2 of ['ITEMS', 'items', 'LIST', 'list', 'data']) {
+        if (v[k2] && Array.isArray(v[k2])) return v[k2];
+      }
+    }
+  }
+  // if the object itself looks like a single player record
+  if (raw.customerID || raw.CustomerID || raw.customerId) return [raw];
+  return [];
+}
+
+function normalizePlayer(raw) {
+  // Strip password immediately
+  const p = { ...raw };
+  delete p.passwordPlain;
+  delete p.PasswordPlain;
+  delete p.password;
+  delete p.Password;
+
+  const id = String(pick(p, 'customerID', 'CustomerID', 'customerId', 'id', 'ID') || '').trim();
+  const name = String(pick(p, 'name', 'Name', 'displayName', 'DisplayName', 'fullName') || '').trim();
+
+  const currentBalance  = toNum(pick(p, 'currentBalance', 'CurrentBalance', 'balance', 'Balance'));
+  const availableBalance = toNum(pick(p, 'availableBalance', 'AvailableBalance'));
+  const pendingBalance  = toNum(pick(p, 'pendingBalance', 'PendingBalance'));
+  const weekBalance     = toNum(pick(p, 'weekBalance', 'WeekBalance', 'weekPnl', 'WeekPnl', 'wBalance'));
+  const creditLimit     = toNum(pick(p, 'creditLimit', 'CreditLimit'));
+  const freePlayBalance = toNum(pick(p, 'freePlayBalance', 'FreePlayBalance', 'freePlay', 'FreePlay'));
+  const lifetimeWon     = toNum(pick(p, 'lifetimeWon', 'LifetimeWon', 'lifetimewin', 'LifetimeWin'));
+  const lifetimeLost    = toNum(pick(p, 'lifetimeLost', 'LifetimeLost', 'lifetimeloss', 'LifetimeLoss'));
+
+  const active    = toBool(pick(p, 'active', 'Active', 'isActive', 'IsActive'));
+  const suspended = toBool(pick(p, 'suspended', 'Suspended', 'isSuspended'));
+  const casinoAccess = toBool(pick(p, 'casinoAccess', 'CasinoAccess', 'casino'));
+  const liveBetting  = toBool(pick(p, 'liveBettingAccess', 'LiveBettingAccess', 'liveBetting'));
+  const flagged   = toBool(pick(p, 'flagged', 'Flagged', 'flag', 'Flag'));
+
+  const lastLogin   = toDate(pick(p, 'lastLogin', 'LastLogin', 'lastlogin'));
+  const lastWager   = toDate(pick(p, 'lastWager', 'LastWager', 'lastwager', 'lastBet', 'LastBet'));
+  const lastDeposit = toDate(pick(p, 'lastDeposit', 'LastDeposit'));
+
+  // Mask IP - only last octet
+  const rawIp = String(pick(p, 'IP', 'ip', 'Ip', 'lastIp') || '');
+  const ip = rawIp ? rawIp.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '***.***.***.***.$4').replace('***.$4','') + (rawIp.match(/\d+$/) ? rawIp.match(/\d+$/)[0] : '') : '';
+  // simpler mask
+  const ipMasked = rawIp.replace(/^[\d*]+\.[\d*]+\.[\d*]+\./, '***.***.***.');
+
+  const notes = String(pick(p, 'notes', 'Notes', 'comment', 'Comment') || '');
+
+  return {
+    id, name, currentBalance, availableBalance, pendingBalance,
+    weekBalance, creditLimit, freePlayBalance,
+    lifetimeWon, lifetimeLost,
+    lifetimePnl: lifetimeWon - lifetimeLost,
+    active, suspended, casinoAccess, liveBetting, flagged,
+    lastLogin, lastWager, lastDeposit,
+    ipMasked, notes,
+    _raw: p // keep raw (minus password) for debug panel
+  };
+}
+
+// ─── SEGMENTATION ──────────────────────────────────────────────────────────────
+const SEG_THRESHOLDS = {
+  vipVolume: 10000,
+  vipCredit: 5000,
+  activeWagerDays: 7,
+  newMaxVolume: 500,
+  newLoginDays: 30,
+  atRiskMinDays: 14,
+  atRiskMaxDays: 30,
+  dormantDays: 30
+};
+
+function getSegment(p) {
+  const now = Date.now();
+  const dayMs = 86400000;
+  const lastActivity = p.lastWager || p.lastLogin;
+  const daysSinceActivity = lastActivity ? (now - lastActivity.getTime()) / dayMs : Infinity;
+  const totalVolume = p.lifetimeWon + p.lifetimeLost;
+
+  // VIP
+  if (totalVolume > SEG_THRESHOLDS.vipVolume || p.creditLimit > SEG_THRESHOLDS.vipCredit) return 'VIP';
+  // ACTIVE
+  if (p.lastWager && daysSinceActivity <= SEG_THRESHOLDS.activeWagerDays) return 'ACTIVE';
+  // NEW
+  if (p.lastLogin && daysSinceActivity <= SEG_THRESHOLDS.newLoginDays && totalVolume < SEG_THRESHOLDS.newMaxVolume) return 'NEW';
+  // AT-RISK
+  if (p.lastWager && daysSinceActivity >= SEG_THRESHOLDS.atRiskMinDays && daysSinceActivity <= SEG_THRESHOLDS.atRiskMaxDays && totalVolume > 0) return 'AT-RISK';
+  // DORMANT
+  return 'DORMANT';
+}
+
+const SEG_COLORS = {
+  VIP:     { bg: 'rgba(255,214,10,.18)',  color: '#FFD60A',  border: '#FFD60A' },
+  ACTIVE:  { bg: 'rgba(74,222,128,.15)',  color: '#4ade80',  border: '#4ade80' },
+  NEW:     { bg: 'rgba(96,165,250,.15)',  color: '#60a5fa',  border: '#60a5fa' },
+  'AT-RISK': { bg: 'rgba(251,146,60,.15)', color: '#fb923c', border: '#fb923c' },
+  DORMANT: { bg: 'rgba(153,153,153,.15)', color: '#999',     border: '#666'    }
+};
+
+// ─── FORMATTERS ────────────────────────────────────────────────────────────────
+const currencyFmt = new Intl.NumberFormat('en-US', { style:'currency', currency:'USD', minimumFractionDigits:0, maximumFractionDigits:0 });
+const currency2Fmt = new Intl.NumberFormat('en-US', { style:'currency', currency:'USD', minimumFractionDigits:2, maximumFractionDigits:2 });
+
+function fmtCurrency(n) { return currencyFmt.format(n); }
+function fmtCurrency2(n) { return currency2Fmt.format(n); }
+
+function fmtRelTime(date) {
+  if (!date) return '—';
+  const diff = Date.now() - date.getTime();
+  const mins = Math.floor(diff / 60000);
+  const hrs  = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (hrs < 24) return `${hrs}h ago`;
+  if (days < 365) return `${days}d ago`;
+  return `${Math.floor(days/365)}y ago`;
+}
+
+function fmtPnl(n) {
+  const color = n >= 0 ? 'var(--green)' : 'var(--red-neg)';
+  const sign  = n >= 0 ? '+' : '';
+  return `<span style="color:${color};font-weight:600;">${sign}${fmtCurrency(n)}</span>`;
+}
+
+function segBadge(seg) {
+  const c = SEG_COLORS[seg] || SEG_COLORS.DORMANT;
+  return `<span class="badge" style="background:${c.bg};color:${c.color};border:1px solid ${c.border}40;">${seg}</span>`;
+}
+
+function statusBadge(p) {
+  if (p.suspended) return `<span class="badge" style="background:rgba(248,113,113,.15);color:#f87171;border:1px solid #f8717140;">SUSPENDED</span>`;
+  if (p.active)    return `<span class="badge" style="background:rgba(74,222,128,.12);color:#4ade80;border:1px solid #4ade8040;">ACTIVE</span>`;
+  return `<span class="badge" style="background:rgba(153,153,153,.1);color:#999;border:1px solid #66666640;">INACTIVE</span>`;
+}
+
+// ─── COMPUTED ──────────────────────────────────────────────────────────────────
+function getFiltered() {
+  const q = state.search.toLowerCase().trim();
+  return state.players
+    .map(p => ({ ...p, segment: getSegment(p) }))
+    .filter(p => {
+      if (state.activeSeg !== 'ALL' && p.segment !== state.activeSeg) return false;
+      if (q && !p.id.toLowerCase().includes(q) && !p.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+}
+
+function getSorted(players) {
+  const key = document.getElementById('sort-select')?.value || 'lastActive';
+  return [...players].sort((a, b) => {
+    switch (key) {
+      case 'lastActive': {
+        const da = (a.lastWager || a.lastLogin || new Date(0)).getTime();
+        const db = (b.lastWager || b.lastLogin || new Date(0)).getTime();
+        return db - da;
+      }
+      case 'balanceDesc': return b.currentBalance - a.currentBalance;
+      case 'weekPnl': return b.weekBalance - a.weekBalance;
+      case 'lifetime': return b.lifetimePnl - a.lifetimePnl;
+      case 'nameAz': return (a.name || a.id).localeCompare(b.name || b.id);
+      default: return 0;
+    }
+  });
+}
+
+function getSegCounts() {
+  const all = state.players.map(p => ({ ...p, segment: getSegment(p) }));
+  const counts = { ALL: all.length, VIP: 0, ACTIVE: 0, NEW: 0, 'AT-RISK': 0, DORMANT: 0 };
+  all.forEach(p => { if (counts[p.segment] !== undefined) counts[p.segment]++; });
+  return counts;
+}
+
+// ─── RENDER ────────────────────────────────────────────────────────────────────
+function render() {
+  renderSegTabs();
+  renderSummaryCards();
+  renderTable();
+}
+
+function renderSegTabs() {
+  const counts = getSegCounts();
+  const segs = ['ALL', 'VIP', 'ACTIVE', 'NEW', 'AT-RISK', 'DORMANT'];
+  const segColors = {
+    ALL: '#fff', VIP: '#FFD60A', ACTIVE: '#4ade80', NEW: '#60a5fa', 'AT-RISK': '#fb923c', DORMANT: '#999'
+  };
+  const el = document.getElementById('seg-tabs');
+  el.innerHTML = segs.map(seg => {
+    const active = state.activeSeg === seg;
+    const col = active ? segColors[seg] : '#999';
+    return `<div class="seg-tab ${active ? 'active' : ''}" onclick="setSeg('${seg}')">
+      <span style="font-size:11px;font-weight:700;letter-spacing:.06em;color:${col};">${seg}</span>
+      <span style="font-size:18px;font-weight:800;color:${active ? segColors[seg] : '#fff'};margin-top:3px;">${counts[seg]}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderSummaryCards() {
+  const players = state.players.map(p => ({ ...p, segment: getSegment(p) }));
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const totalPlayers   = players.length;
+  const activeToday    = players.filter(p => p.lastLogin && p.lastLogin >= today).length;
+  const totalBalance   = players.reduce((s,p) => s + p.currentBalance, 0);
+  const weekPnl        = players.reduce((s,p) => s + p.weekBalance, 0);
+  const totalExposure  = players.reduce((s,p) => s + p.pendingBalance, 0);
+  const pendingCount   = state.pendingWagers.length || players.reduce((s,p) => s + (p.pendingBalance > 0 ? 1 : 0), 0);
+
+  const cards = [
+    { label: 'Total Players',  value: totalPlayers.toLocaleString(), icon: '👥', sub: 'registered accounts' },
+    { label: 'Active Today',   value: activeToday.toLocaleString(),  icon: '🟢', sub: 'logged in today' },
+    { label: 'Total Balance',  value: fmtCurrency(totalBalance),     icon: '💰', sub: 'across all accounts', colored: totalBalance },
+    { label: 'Pending Bets',   value: pendingCount.toLocaleString(), icon: '⏳', sub: 'open wagers' },
+    { label: 'Week P&L',       value: fmtCurrency(Math.abs(weekPnl)),icon: '📊', sub: 'this week', colored: weekPnl, signed: true },
+    { label: 'Total Exposure', value: fmtCurrency(totalExposure),    icon: '⚡', sub: 'pending balance' }
+  ];
+
+  const el = document.getElementById('summary-grid');
+  el.innerHTML = cards.map(c => {
+    let valColor = 'var(--white)';
+    let sign = '';
+    if (c.signed !== undefined) {
+      valColor = weekPnl >= 0 ? 'var(--green)' : 'var(--red-neg)';
+      sign = weekPnl >= 0 ? '+' : '-';
+    } else if (c.colored !== undefined) {
+      valColor = c.colored >= 0 ? 'var(--white)' : 'var(--red-neg)';
+    }
+    return `<div class="card" style="text-align:center;">
+      <div style="font-size:20px;margin-bottom:6px;">${c.icon}</div>
+      <div style="font-size:22px;font-weight:800;color:${valColor};margin-bottom:4px;">${sign}${c.value}</div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;">${c.label}</div>
+      <div style="font-size:11px;color:#666;margin-top:2px;">${c.sub}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderTable() {
+  const filtered = getFiltered();
+  const sorted   = getSorted(filtered);
+  const total    = sorted.length;
+  const pages    = Math.ceil(total / PAGE_SIZE);
+
+  // Clamp page
+  if (state.page >= pages) state.page = Math.max(0, pages - 1);
+
+  const start = state.page * PAGE_SIZE;
+  const slice = sorted.slice(start, start + PAGE_SIZE);
+
+  // Desktop table
+  const tbody = document.getElementById('player-tbody');
+  tbody.innerHTML = slice.map(p => {
+    const lastActive = p.lastWager || p.lastLogin;
+    const isSelected = state.selectedPlayer && state.selectedPlayer.id === p.id;
+    return `<tr class="${isSelected ? 'selected' : ''}" onclick="selectPlayer('${p.id}')">
+      <td style="font-family:monospace;font-weight:700;color:var(--yellow);">${p.id || '—'}</td>
+      <td style="color:var(--gray);">${p.name || '—'}</td>
+      <td style="color:${p.currentBalance >= 0 ? 'var(--green)' : 'var(--red-neg)'};">${fmtCurrency(p.currentBalance)}</td>
+      <td>${fmtPnl(p.weekBalance)}</td>
+      <td>${fmtPnl(p.lifetimePnl)}</td>
+      <td style="color:var(--gray);font-size:12px;">${fmtRelTime(lastActive)}</td>
+      <td>${segBadge(p.segment)}</td>
+      <td>${statusBadge(p)}</td>
+      <td class="hide-tablet" style="color:${p.freePlayBalance > 0 ? '#60a5fa' : '#444'};">${p.freePlayBalance > 0 ? fmtCurrency(p.freePlayBalance) : '—'}</td>
+      <td class="hide-tablet">${p.flagged ? '🚩' : ''}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--gray);">No players found</td></tr>`;
+
+  // Pagination
+  const pag = document.getElementById('pagination');
+  const info = document.getElementById('page-info');
+  const prev = document.getElementById('prev-btn');
+  const next = document.getElementById('next-btn');
+  if (total > PAGE_SIZE) {
+    pag.style.display = 'flex';
+    info.textContent = `Showing ${start+1}–${Math.min(start+PAGE_SIZE, total)} of ${total} players`;
+    prev.disabled = state.page === 0;
+    next.disabled = state.page >= pages - 1;
+  } else {
+    pag.style.display = 'none';
+  }
+
+  // Mobile cards
+  renderMobileCards(slice);
+
+  // Detail panel
+  if (state.selectedPlayer) renderDetailPanel(state.selectedPlayer);
+}
+
+function renderMobileCards(players) {
+  const el = document.getElementById('mobile-cards');
+  if (!players.length) {
+    el.innerHTML = `<div style="text-align:center;padding:32px;color:var(--gray);">No players found</div>`;
+    return;
+  }
+  el.innerHTML = players.map(p => {
+    const lastActive = p.lastWager || p.lastLogin;
+    const isSelected = state.selectedPlayer && state.selectedPlayer.id === p.id;
+    return `<div class="card" style="margin-bottom:10px;cursor:pointer;border-color:${isSelected ? 'var(--yellow)' : 'var(--border)'};" onclick="selectPlayer('${p.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+        <div>
+          <div style="font-family:monospace;font-weight:700;color:var(--yellow);font-size:16px;">${p.id}</div>
+          ${p.name ? `<div style="color:var(--gray);font-size:12px;">${p.name}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${segBadge(p.segment)}
+          ${statusBadge(p)}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div>
+          <div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;">Balance</div>
+          <div style="font-weight:700;color:${p.currentBalance>=0?'var(--green)':'var(--red-neg)'};">${fmtCurrency(p.currentBalance)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;">Week P&L</div>
+          <div style="font-weight:700;">${fmtPnl(p.weekBalance)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;">Last Active</div>
+          <div style="font-size:12px;color:var(--gray);">${fmtRelTime(lastActive)}</div>
+        </div>
+      </div>
+      ${p.flagged ? `<div style="margin-top:8px;font-size:12px;color:var(--red-neg);">🚩 Flagged</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderDetailPanel(playerId) {
+  const p = state.players.map(p => ({ ...p, segment: getSegment(p) })).find(p => p.id === playerId);
+  const el = document.getElementById('detail-panel');
+  if (!p) { el.style.display = 'none'; return; }
+
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-family:monospace;font-weight:800;font-size:18px;color:var(--yellow);">${p.id}</span>
+        ${p.name ? `<span style="color:var(--gray);">${p.name}</span>` : ''}
+        ${segBadge(p.segment)}
+        ${statusBadge(p)}
+        ${p.flagged ? '<span style="color:var(--red-neg);">🚩 Flagged</span>' : ''}
+      </div>
+      <button class="btn" onclick="closeDetail()" style="font-size:12px;">✕ Close</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;">
+      ${detailCard('Current Balance', fmtCurrency(p.currentBalance), p.currentBalance>=0?'var(--green)':'var(--red-neg)')}
+      ${detailCard('Available Balance', fmtCurrency(p.availableBalance))}
+      ${detailCard('Pending Balance', fmtCurrency(p.pendingBalance))}
+      ${detailCard('Week P&L', (p.weekBalance>=0?'+':'')+fmtCurrency(p.weekBalance), p.weekBalance>=0?'var(--green)':'var(--red-neg)')}
+      ${detailCard('Lifetime Won', fmtCurrency(p.lifetimeWon), 'var(--green)')}
+      ${detailCard('Lifetime Lost', fmtCurrency(p.lifetimeLost), 'var(--red-neg)')}
+      ${detailCard('Net Lifetime', (p.lifetimePnl>=0?'+':'')+fmtCurrency(p.lifetimePnl), p.lifetimePnl>=0?'var(--green)':'var(--red-neg)')}
+      ${detailCard('Credit Limit', fmtCurrency(p.creditLimit))}
+      ${p.freePlayBalance>0 ? detailCard('Free Play', fmtCurrency(p.freePlayBalance), '#60a5fa') : ''}
+      ${detailCard('Casino Access', p.casinoAccess?'Yes':'No', p.casinoAccess?'var(--green)':'var(--gray)')}
+      ${detailCard('Live Betting', p.liveBetting?'Yes':'No', p.liveBetting?'var(--green)':'var(--gray)')}
+      ${detailCard('Last Login', p.lastLogin ? p.lastLogin.toLocaleDateString()+' '+p.lastLogin.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—')}
+      ${detailCard('Last Wager', p.lastWager ? p.lastWager.toLocaleDateString()+' '+p.lastWager.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—')}
+      ${detailCard('Last Deposit', p.lastDeposit ? p.lastDeposit.toLocaleDateString() : '—')}
+    </div>
+    ${p.notes ? `<div style="margin-top:12px;padding:10px;background:var(--bg-page);border-radius:6px;font-size:12px;color:var(--gray);"><strong style="color:#fff;">Notes:</strong> ${p.notes}</div>` : ''}
+    <div style="margin-top:12px;font-size:10px;color:#555;">Player data for reference only. Full raw keys: ${Object.keys(p._raw || {}).join(', ')}</div>
+  `;
+}
+
+function detailCard(label, value, color) {
+  return `<div style="background:var(--bg-page);border-radius:7px;padding:10px 12px;">
+    <div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">${label}</div>
+    <div style="font-size:14px;font-weight:700;color:${color||'var(--white)'};">${value}</div>
+  </div>`;
+}
+
+// ─── EVENT HANDLERS ────────────────────────────────────────────────────────────
+window.setSeg = function(seg) {
+  state.activeSeg = seg;
+  state.page = 0;
+  state.selectedPlayer = null;
+  document.getElementById('detail-panel').style.display = 'none';
+  render();
+};
+
+window.setSortCol = function(col) { /* handled by select dropdown */ };
+
+window.onSearchInput = function() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.search = document.getElementById('search-input').value;
+    state.page = 0;
+    render();
+  }, 300);
+};
+
+window.changePage = function(dir) {
+  const filtered = getFiltered();
+  const pages = Math.ceil(filtered.length / PAGE_SIZE);
+  state.page = Math.max(0, Math.min(pages-1, state.page + dir));
+  render();
+};
+
+window.selectPlayer = function(id) {
+  if (state.selectedPlayer && state.selectedPlayer.id === id) {
+    state.selectedPlayer = null;
+    document.getElementById('detail-panel').style.display = 'none';
+  } else {
+    state.selectedPlayer = state.players.find(p => p.id === id) || null;
+    if (state.selectedPlayer) {
+      renderDetailPanel(id);
+      document.getElementById('detail-panel').style.display = 'block';
+      setTimeout(() => document.getElementById('detail-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+    }
+  }
+  // Re-render table to update selected state
+  const filtered = getFiltered();
+  const sorted = getSorted(filtered);
+  const slice = sorted.slice(state.page * PAGE_SIZE, (state.page+1) * PAGE_SIZE);
+  // update row highlights
+  document.querySelectorAll('#player-tbody tr').forEach(tr => {
+    const cell = tr.querySelector('td:first-child');
+    if (cell) {
+      tr.classList.toggle('selected', state.selectedPlayer && cell.textContent === state.selectedPlayer.id);
+    }
+  });
+};
+
+window.closeDetail = function() {
+  state.selectedPlayer = null;
+  document.getElementById('detail-panel').style.display = 'none';
+  document.querySelectorAll('#player-tbody tr').forEach(tr => tr.classList.remove('selected'));
+};
+
+// ─── DATA LOADING ──────────────────────────────────────────────────────────────
+function setLoadingMsg(msg) {
+  const el = document.getElementById('loading-msg');
+  if (el) el.textContent = msg;
+}
+
+function setStatus(ok, msg) {
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  if (dot) dot.style.background = ok ? '#4ade80' : (ok === null ? '#fb923c' : '#f87171');
+  if (txt) txt.textContent = msg;
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideError() {
+  const el = document.getElementById('error-banner');
+  if (el) el.style.display = 'none';
+}
+
+async function loadData(isRefresh = false) {
+  if (state.loading) return;
+  state.loading = true;
+  hideError();
+
+  if (!isRefresh) {
+    document.getElementById('loading-overlay').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  } else {
+    const icon = document.getElementById('refresh-icon');
+    if (icon) { icon.classList.add('spin'); }
+    const btn = document.getElementById('refresh-btn');
+    if (btn) btn.disabled = true;
+  }
+
+  try {
+    // Authenticate (or re-auth on refresh if token expired)
+    if (!api.token) {
+      setLoadingMsg('Authenticating...');
+      await api.auth();
+    }
+
+    setLoadingMsg('Loading player data...');
+    const rawPlayers = await api.getPlayers();
+    const playerArr  = extractArray(rawPlayers);
+    console.log(`[WA] Extracted ${playerArr.length} players from response`);
+
+    state.players = playerArr
+      .map(normalizePlayer)
+      .filter(p => p.id); // skip malformed records
+
+    // Pending wagers (non-fatal)
+    try {
+      setLoadingMsg('Loading wager data...');
+      const rawWagers = await api.getPendingWagers();
+      state.pendingWagers = extractArray(rawWagers);
+    } catch (e) {
+      console.warn('[WA] getPendingWagers failed (non-fatal):', e.message);
+      state.warnings.push('Could not load pending wagers — showing estimate from player data');
+    }
+
+    state.lastUpdated = new Date();
+    const el = document.getElementById('last-updated');
+    if (el) el.textContent = state.lastUpdated.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+
+    setStatus(true, `Connected · ${state.players.length} players`);
+
+    render();
+
+  } catch (err) {
+    console.error('[WA] Load error:', err);
+    const isProxy = err.message.toLowerCase().includes('fetch') || err.message.toLowerCase().includes('network');
+    const msg = isProxy
+      ? '⚡ Proxy offline — check wa-proxy.mahmoudwakil89.workers.dev'
+      : err.message.includes('Auth') || err.message.includes('401') || err.message.includes('403')
+        ? '🔒 Could not connect to WagerAttack. Check proxy and credentials.'
+        : `⚠️ ${err.message}`;
+    showError(msg);
+    setStatus(false, 'Connection error');
+    // If token issue on refresh, try re-auth once
+    if (isRefresh && (err.message.includes('401') || err.message.includes('token'))) {
+      api.token = null;
+    }
+  } finally {
+    state.loading = false;
+    document.getElementById('loading-overlay').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    if (isRefresh) {
+      const icon = document.getElementById('refresh-icon');
+      if (icon) icon.classList.remove('spin');
+      const btn = document.getElementById('refresh-btn');
+      if (btn) btn.disabled = false;
+    }
+    if (state.warnings.length) {
+      showError('⚠️ ' + state.warnings.join(' · '));
+    }
+  }
+}
+
+window.refreshData = function() {
+  state.warnings = [];
+  loadData(true);
+};
+
+// ─── RESPONSIVE SUMMARY GRID ──────────────────────────────────────────────────
+function updateSummaryGrid() {
+  const grid = document.getElementById('summary-grid');
+  if (!grid) return;
+  const w = window.innerWidth;
+  grid.style.gridTemplateColumns = w < 768 ? '1fr 1fr' : w < 1200 ? '1fr 1fr 1fr' : 'repeat(6,1fr)';
+}
+window.addEventListener('resize', updateSummaryGrid);
+updateSummaryGrid();
+
+// ─── INIT ──────────────────────────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
