@@ -315,55 +315,25 @@ let state = {
 let searchTimer = null;
 
 // ─── API CLIENT ────────────────────────────────────────────────────────────────
-// All data calls use the Manager/* controller with standard agent params:
-//   agentID=MOWA&agentOwner=MOWA&agentSite=1&RRO=1&operation=<op>&...
+// Auth is handled by the Cloudflare proxy (v3 smart-auth).
+// Token is stored in the proxy via /set-token and kept alive via keepAliveToken.
+// The CRM just sends requests — no Authorization header needed.
 class WaCRM {
   constructor(proxyUrl) {
     this.proxy = proxyUrl;
-    this.token = null;
     this.agentID = 'MOWA';
   }
 
   async auth() {
-    const r = await fetch(`${this.proxy}/cloud/api/System/authenticateCustomer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'customerID=MOWA&password=Wakil'
-    });
-    if (!r.ok) throw new Error(`Auth failed: HTTP ${r.status}`);
+    // Auth is handled by the proxy. Just verify it has a token.
+    const r = await fetch(`${this.proxy}/token-status`);
     const d = await r.json();
-    console.log('[WA] Auth response:', JSON.stringify(d).substring(0, 200));
-    if (!d.code) throw new Error('Auth response missing token code');
-    this.token = d.code;
-    return this.token;
-  }
-
-  async renewToken() {
-    const r = await fetch(`${this.proxy}/cloud/api/System/renewToken`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Bearer ${this.token}`
-      },
-      body: 'operation=renewToken&agentID=MOWA&agentOwner=MOWA&agentSite=1'
-    });
-    if (!r.ok) throw new Error(`Token renewal failed: HTTP ${r.status}`);
-    const d = await r.json();
-    if (!d.code) throw new Error('renewToken response missing code');
-    this.token = d.code;
-    return this.token;
+    console.log('[WA] Proxy token status:', JSON.stringify(d));
+    if (!d.hasToken) throw new Error('Proxy has no stored token. Log into wagerattack.ag/manager.html and run: fetch("https://wa-proxy.mahmoudwakil89.workers.dev/set-token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"token="+encodeURIComponent(require.s.contexts._.defined["system/security"].prototype.token)})');
+    return 'proxy-managed';
   }
 
   async managerCall(operation, extraParams = {}) {
-    // Renew token before each manager call (JWT ~6min window).
-    // Fall back to full re-auth if renewal fails.
-    try {
-      await this.renewToken();
-    } catch (e) {
-      console.warn('[WA] renewToken failed, re-authenticating:', e.message);
-      await this.auth();
-    }
-
     const params = new URLSearchParams({
       operation,
       agentID: this.agentID,
@@ -373,22 +343,14 @@ class WaCRM {
       ...extraParams
     });
 
-    const doRequest = async () => fetch(this.proxy + '/cloud/api/Manager/' + operation, {
+    const r = await fetch(this.proxy + '/cloud/api/Manager/' + operation, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': 'Bearer ' + this.token
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString()
     });
 
-    let r = await doRequest();
-
-    // If 401, token may have expired — re-auth once and retry
     if (r.status === 401) {
-      console.log('[WA] Got 401, re-authenticating...');
-      await this.auth();
-      r = await doRequest();
+      throw new Error('Token expired — re-seed the proxy. Open wagerattack.ag/manager.html → Console → paste the set-token fetch command.');
     }
 
     if (!r.ok) throw new Error('Manager/' + operation + ' failed: HTTP ' + r.status);
@@ -397,7 +359,7 @@ class WaCRM {
     return data;
   }
 
-  // --- Corrected endpoints ---
+  // --- Endpoints ---
   async getPlayers() {
     return this.managerCall('getCustomerAdmin', { sortCustom: '2' });
   }
@@ -954,11 +916,9 @@ async function loadData(isRefresh = false) {
   }
 
   try {
-    // Authenticate (or re-auth on refresh if token expired)
-    if (!api.token) {
-      setLoadingMsg('Authenticating...');
-      await api.auth();
-    }
+    // Verify proxy has a token (auth is managed by the Cloudflare proxy)
+    setLoadingMsg('Checking proxy auth...');
+    await api.auth();
 
     setLoadingMsg('Loading player data...');
     const rawPlayers = await api.getPlayers();
@@ -1033,14 +993,10 @@ async function loadData(isRefresh = false) {
     const msg = isProxy
       ? '⚡ Proxy offline — check wa-proxy.mahmoudwakil89.workers.dev'
       : err.message.includes('Auth') || err.message.includes('401') || err.message.includes('403')
-        ? '🔒 Could not connect to WagerAttack. Check proxy and credentials.'
+        ? '🔒 Token expired — re-seed the proxy from wagerattack.ag/manager.html console.'
         : `⚠️ ${err.message}`;
     showError(msg);
     setStatus(false, 'Connection error');
-    // If token issue on refresh, try re-auth once
-    if (isRefresh && (err.message.includes('401') || err.message.includes('token'))) {
-      api.token = null;
-    }
   } finally {
     state.loading = false;
     document.getElementById('loading-overlay').style.display = 'none';
