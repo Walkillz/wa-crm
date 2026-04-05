@@ -315,11 +315,13 @@ let state = {
 let searchTimer = null;
 
 // ─── API CLIENT ────────────────────────────────────────────────────────────────
+// All data calls use the Manager/* controller with standard agent params:
+//   agentID=MOWA&agentOwner=MOWA&agentSite=1&RRO=1&operation=<op>&...
 class WaCRM {
   constructor(proxyUrl) {
     this.proxy = proxyUrl;
     this.token = null;
-    this.customerId = 'MOWA';
+    this.agentID = 'MOWA';
   }
 
   async auth() {
@@ -343,28 +345,35 @@ class WaCRM {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Authorization': `Bearer ${this.token}`
       },
-      body: 'operation=renewToken&agentSite=0'
+      body: 'operation=renewToken&agentID=MOWA&agentOwner=MOWA&agentSite=1'
     });
     if (!r.ok) throw new Error(`Token renewal failed: HTTP ${r.status}`);
     const d = await r.json();
-    console.log('[WA] RenewToken response keys:', Object.keys(d));
     if (!d.code) throw new Error('renewToken response missing code');
     this.token = d.code;
     return this.token;
   }
 
-  async apiCall(controller, operation, extraParams = {}) {
-    // NOTE: renewToken returns 401 for MOWA account — skip it, use auth token directly.
-    // Re-auth automatically if the token expires (JWT ~6min window).
+  async managerCall(operation, extraParams = {}) {
+    // Renew token before each manager call (JWT ~6min window).
+    // Fall back to full re-auth if renewal fails.
+    try {
+      await this.renewToken();
+    } catch (e) {
+      console.warn('[WA] renewToken failed, re-authenticating:', e.message);
+      await this.auth();
+    }
+
     const params = new URLSearchParams({
-      customerID: this.customerId,
-      office: 'M1ATTA',
-      operation: operation,
-      agentSite: '0',
+      operation,
+      agentID: this.agentID,
+      agentOwner: this.agentID,
+      agentSite: '1',
+      RRO: '1',
       ...extraParams
     });
 
-    const doRequest = async () => fetch(this.proxy + '/cloud/api/' + controller + '/' + operation, {
+    const doRequest = async () => fetch(this.proxy + '/cloud/api/Manager/' + operation, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -382,14 +391,30 @@ class WaCRM {
       r = await doRequest();
     }
 
-    if (!r.ok) throw new Error(controller + '/' + operation + ' failed: HTTP ' + r.status);
+    if (!r.ok) throw new Error('Manager/' + operation + ' failed: HTTP ' + r.status);
     const data = await r.json();
-    console.log('[WA] ' + controller + '/' + operation + ' raw (500):', JSON.stringify(data).substring(0, 500));
+    console.log('[WA] Manager/' + operation + ' raw (500):', JSON.stringify(data).substring(0, 500));
     return data;
   }
-  async getPlayers() { return this.apiCall('Customer', 'getCustomers'); }
-  async getPendingWagers() { return this.apiCall('Wager', 'getPendingWagers'); }
-  async getWeeklyFigures() { return this.apiCall('Report', 'getWeeklyFigures'); }
+
+  // --- Corrected endpoints ---
+  async getPlayers() {
+    return this.managerCall('getCustomerAdmin', { sortCustom: '2' });
+  }
+  async getWeeklyFigures(week = 0) {
+    return this.managerCall('getWeeklyFigureByAgent', {
+      week: String(week), type: 'W', layout: 'byDay', bigAmount: '500'
+    });
+  }
+  async getPendingWagers(dateStr = null) {
+    const date = dateStr || new Date().toISOString().slice(0, 10);
+    return this.managerCall('getPending', {
+      date, wagerType: '', sort: '1', typeSort: '2', week: '0', customerID: '0'
+    });
+  }
+  async getPlayerDetail(customerID) {
+    return this.managerCall('getInfoPlayer', { customerID, RRO: '0' });
+  }
 }
 
 const api = new WaCRM(PROXY);
@@ -467,11 +492,17 @@ function normalizePlayer(raw) {
   const lifetimeWon     = toNum(pick(p, 'lifetimeWon', 'LifetimeWon', 'lifetimewin', 'LifetimeWin'));
   const lifetimeLost    = toNum(pick(p, 'lifetimeLost', 'LifetimeLost', 'lifetimeloss', 'LifetimeLoss'));
 
-  const active    = toBool(pick(p, 'active', 'Active', 'isActive', 'IsActive'));
-  const suspended = toBool(pick(p, 'suspended', 'Suspended', 'isSuspended'));
-  const casinoAccess = toBool(pick(p, 'casinoAccess', 'CasinoAccess', 'casino'));
+  const suspendSportsbook = toBool(pick(p, 'SuspendSportsbook', 'suspendSportsbook'));
+  const suspendHorses     = toBool(pick(p, 'SuspendHorses', 'suspendHorses'));
+  const suspendCasino     = toBool(pick(p, 'SuspendCasino', 'suspendCasino'));
+  const suspended = suspendSportsbook || suspendHorses || toBool(pick(p, 'suspended', 'Suspended', 'isSuspended'));
+  const active    = !suspended; // derived — activity flag comes from weekly figures cross-ref
+  const casinoAccess = !suspendCasino && toBool(pick(p, 'casinoAccess', 'CasinoAccess', 'casino', 'CasinoBalance')) || toNum(pick(p, 'CasinoBalance', 'casinoBalance')) > 0;
   const liveBetting  = toBool(pick(p, 'liveBettingAccess', 'LiveBettingAccess', 'liveBetting'));
   const flagged   = toBool(pick(p, 'flagged', 'Flagged', 'flag', 'Flag'));
+  const agentID   = String(pick(p, 'AgentID', 'agentID') || '').trim();
+  const masterAgent = String(pick(p, 'MasterAgent', 'masterAgent') || '').trim();
+  const casinoBalance = toNum(pick(p, 'CasinoBalance', 'casinoBalance'));
 
   const lastLogin   = toDate(pick(p, 'lastLogin', 'LastLogin', 'lastlogin'));
   const lastWager   = toDate(pick(p, 'lastWager', 'LastWager', 'lastwager', 'lastBet', 'LastBet'));
@@ -487,11 +518,18 @@ function normalizePlayer(raw) {
 
   return {
     id, name, currentBalance, availableBalance, pendingBalance,
-    weekBalance, creditLimit, freePlayBalance,
+    weekBalance, creditLimit, freePlayBalance, casinoBalance,
     lifetimeWon, lifetimeLost,
     lifetimePnl: lifetimeWon - lifetimeLost,
-    active, suspended, casinoAccess, liveBetting, flagged,
+    active, suspended, suspendSportsbook, suspendHorses, suspendCasino,
+    casinoAccess, liveBetting, flagged,
+    agentID, masterAgent,
     lastLogin, lastWager, lastDeposit,
+    // Activity flags populated later by cross-referencing weekly figures
+    hadActivityWeek0: false,
+    hadActivityWeek1: false,
+    hadActivityWeek2: false,
+    pnlWeek0: 0, pnlWeek1: 0,
     ipMasked, notes,
     _raw: p // keep raw (minus password) for debug panel
   };
@@ -510,21 +548,24 @@ const SEG_THRESHOLDS = {
 };
 
 function getSegment(p) {
-  const now = Date.now();
-  const dayMs = 86400000;
-  const lastActivity = p.lastWager || p.lastLogin;
-  const daysSinceActivity = lastActivity ? (now - lastActivity.getTime()) / dayMs : Infinity;
-  const totalVolume = p.lifetimeWon + p.lifetimeLost;
+  const totalVolume = Math.abs(p.pnlWeek0) + Math.abs(p.pnlWeek1);
+  const bigBalance = Math.abs(p.currentBalance) > SEG_THRESHOLDS.vipVolume ||
+                     p.creditLimit > SEG_THRESHOLDS.vipCredit;
 
-  // VIP
-  if (totalVolume > SEG_THRESHOLDS.vipVolume || p.creditLimit > SEG_THRESHOLDS.vipCredit) return 'VIP';
-  // ACTIVE
-  if (p.lastWager && daysSinceActivity <= SEG_THRESHOLDS.activeWagerDays) return 'ACTIVE';
-  // NEW
-  if (p.lastLogin && daysSinceActivity <= SEG_THRESHOLDS.newLoginDays && totalVolume < SEG_THRESHOLDS.newMaxVolume) return 'NEW';
-  // AT-RISK
-  if (p.lastWager && daysSinceActivity >= SEG_THRESHOLDS.atRiskMinDays && daysSinceActivity <= SEG_THRESHOLDS.atRiskMaxDays && totalVolume > 0) return 'AT-RISK';
-  // DORMANT
+  // VIP: high balance / credit limit
+  if (bigBalance) return 'VIP';
+
+  // ACTIVE: non-zero P&L in current week
+  if (p.hadActivityWeek0) return 'ACTIVE';
+
+  // AT-RISK: was active last week or 2wk ago, but not this week
+  if (p.hadActivityWeek1 || p.hadActivityWeek2) return 'AT-RISK';
+
+  // NEW: no recent activity but low lifetime volume (proxy)
+  if (totalVolume === 0 && Math.abs(p.currentBalance) < SEG_THRESHOLDS.newMaxVolume &&
+      p.lifetimeWon === 0 && p.lifetimeLost === 0) return 'NEW';
+
+  // DORMANT: everything else
   return 'DORMANT';
 }
 
@@ -639,15 +680,20 @@ function renderSummaryCards() {
   const today = new Date(); today.setHours(0,0,0,0);
 
   const totalPlayers   = players.length;
-  const activeToday    = players.filter(p => p.lastLogin && p.lastLogin >= today).length;
+  const activeToday    = players.filter(p => p.hadActivityWeek0 || (p.lastLogin && p.lastLogin >= today)).length;
   const totalBalance   = players.reduce((s,p) => s + p.currentBalance, 0);
   const weekPnl        = players.reduce((s,p) => s + p.weekBalance, 0);
-  const totalExposure  = players.reduce((s,p) => s + p.pendingBalance, 0);
+  // Sum pending wager risk amounts when available, else fall back to per-player pending balances
+  const pendingFromWagers = state.pendingWagers.reduce((s, w) => {
+    const amt = toNum(pick(w, 'amountWager', 'AmountWager', 'riskAmount', 'RiskAmount', 'amount', 'Amount'));
+    return s + amt;
+  }, 0);
+  const totalExposure  = pendingFromWagers || players.reduce((s,p) => s + p.pendingBalance, 0);
   const pendingCount   = state.pendingWagers.length || players.reduce((s,p) => s + (p.pendingBalance > 0 ? 1 : 0), 0);
 
   const cards = [
     { label: 'Total Players',  value: totalPlayers.toLocaleString(), icon: '👥', sub: 'registered accounts' },
-    { label: 'Active Today',   value: activeToday.toLocaleString(),  icon: '🟢', sub: 'logged in today' },
+    { label: 'Active This Week', value: activeToday.toLocaleString(),  icon: '🟢', sub: 'wagered this week' },
     { label: 'Total Balance',  value: fmtCurrency(totalBalance),     icon: '💰', sub: 'across all accounts', colored: totalBalance },
     { label: 'Pending Bets',   value: pendingCount.toLocaleString(), icon: '⏳', sub: 'open wagers' },
     { label: 'Week P&L',       value: fmtCurrency(Math.abs(weekPnl)),icon: '📊', sub: 'this week', colored: weekPnl, signed: true },
@@ -922,6 +968,46 @@ async function loadData(isRefresh = false) {
     state.players = playerArr
       .map(normalizePlayer)
       .filter(p => p.id); // skip malformed records
+
+    // Weekly figures — cross-reference for activity + week P&L.
+    // Fetch current week, last week, and 2wk-ago in parallel (non-fatal).
+    try {
+      setLoadingMsg('Loading weekly figures...');
+      const [wk0, wk1, wk2] = await Promise.all([
+        api.getWeeklyFigures(0).catch(e => { console.warn('[WA] weekly w0:', e.message); return null; }),
+        api.getWeeklyFigures(1).catch(e => { console.warn('[WA] weekly w1:', e.message); return null; }),
+        api.getWeeklyFigures(2).catch(e => { console.warn('[WA] weekly w2:', e.message); return null; })
+      ]);
+      const mapByCustomer = (raw) => {
+        const m = new Map();
+        extractArray(raw).forEach(row => {
+          const cid = String(pick(row, 'CustomerID', 'customerID', 'customerId', 'id') || '').trim();
+          if (!cid) return;
+          const pnl = toNum(pick(row, 'SettleFigure', 'settleFigure', 'SettleFigureZB', 'settleFigureZB'));
+          m.set(cid, pnl);
+        });
+        return m;
+      };
+      const m0 = mapByCustomer(wk0);
+      const m1 = mapByCustomer(wk1);
+      const m2 = mapByCustomer(wk2);
+      state.players.forEach(p => {
+        const v0 = m0.get(p.id) || 0;
+        const v1 = m1.get(p.id) || 0;
+        const v2 = m2.get(p.id) || 0;
+        p.pnlWeek0 = v0;
+        p.pnlWeek1 = v1;
+        p.pnlWeek2 = v2;
+        p.hadActivityWeek0 = v0 !== 0;
+        p.hadActivityWeek1 = v1 !== 0;
+        p.hadActivityWeek2 = v2 !== 0;
+        // Use week-0 settle as the weekBalance shown in the UI
+        p.weekBalance = v0;
+      });
+    } catch (e) {
+      console.warn('[WA] getWeeklyFigures failed (non-fatal):', e.message);
+      state.warnings.push('Could not load weekly figures — segmentation may be limited');
+    }
 
     // Pending wagers (non-fatal)
     try {
